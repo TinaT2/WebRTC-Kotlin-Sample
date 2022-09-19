@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "814152227176",
+    "project_id": "webrtcsample-24f4a",
+    "storage_bucket": "webrtcsample-24f4a.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:814152227176:android:34f7881f3269e8e873dedd",
+        "android_client_info": {
+          "package_name": "com.dwarsh.webrtcsample"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "814152227176-7h5o1ga3fpiugg2kv58m5f1hbk6qjm7q.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZbT4jY8RnuFkH-jNlqDPx17t0LPKgFYs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "814152227176-7h5o1ga3fpiugg2kv58m5f1hbk6qjm7q.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
