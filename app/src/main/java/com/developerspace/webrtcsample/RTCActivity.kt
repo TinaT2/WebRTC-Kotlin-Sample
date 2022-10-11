@@ -3,37 +3,49 @@ package com.developerspace.webrtcsample
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
+import android.os.PersistableBundle
 import android.util.Log
+import android.widget.ImageView
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.isGone
-import kotlinx.android.synthetic.main.activity_main.*
-import kotlinx.android.synthetic.main.activity_start.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import org.webrtc.*
-import java.util.*
+import org.webrtc.IceCandidate
+import org.webrtc.MediaStream
+import org.webrtc.SessionDescription
+import org.webrtc.SurfaceViewRenderer
 
-@ExperimentalCoroutinesApi
 class RTCActivity : AppCompatActivity() {
 
     companion object {
         private const val CAMERA_AUDIO_PERMISSION_REQUEST_CODE = 1
         private const val CAMERA_PERMISSION = Manifest.permission.CAMERA
         private const val AUDIO_PERMISSION = Manifest.permission.RECORD_AUDIO
+        const val ARGUMENT_MEETING_ID = "meetingID"
+        const val ARGUMENT_IS_JOIN = "isJoin"
     }
 
     private lateinit var rtcClient: RTCClient
     private lateinit var signallingClient: SignalingClient
+    private lateinit var remoteView: SurfaceViewRenderer
+    private lateinit var localView: SurfaceViewRenderer
+    private lateinit var remoteViewLoading: ProgressBar
+    private lateinit var micButton: ImageView
+    private lateinit var videoButton: ImageView
+    private lateinit var endCallButton: ImageView
+    private lateinit var switchCameraButton: ImageView
+    private lateinit var audioOutputButton: ImageView
 
     private val audioManager by lazy { RTCAudioManager.create(this) }
 
-    val TAG = "MainActivity"
+    val TAG = this::class.simpleName
 
-    private var meetingID : String = "test-call"
+    private var meetingID: String = "test-call"
 
     private var isJoin = false
 
@@ -43,73 +55,122 @@ class RTCActivity : AppCompatActivity() {
 
     private var inSpeakerMode = true
 
-    private val sdpObserver = object : AppSdpObserver() {
-        override fun onCreateSuccess(p0: SessionDescription?) {
-            super.onCreateSuccess(p0)
-//            signallingClient.send(p0)
-        }
-    }
+    private val sdpObserver = object : AppSdpObserver() {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        setContentView(R.layout.activity_rtc)
+        initUiViews()
+        initUiComponent()
+        initUiListeners()
+    }
 
-        if (intent.hasExtra("meetingID"))
-            meetingID = intent.getStringExtra("meetingID")!!
-        if (intent.hasExtra("isJoin"))
-            isJoin = intent.getBooleanExtra("isJoin",false)
+    private fun initUiViews() {
+        remoteView = findViewById(R.id.remote_view)
+        localView = findViewById(R.id.local_view)
+        remoteViewLoading = findViewById(R.id.remote_view_loading)
+        micButton = findViewById(R.id.mic_button)
+        videoButton = findViewById(R.id.video_button)
+        endCallButton = findViewById(R.id.end_call_button)
+        switchCameraButton = findViewById(R.id.switch_camera_button)
+        audioOutputButton = findViewById(R.id.audio_output_button)
+    }
 
+    private fun initUiComponent() {
+        getArgument()
         checkCameraAndAudioPermission()
+    }
+    private fun initUiListeners(){
         audioManager.selectAudioDevice(RTCAudioManager.AudioDevice.SPEAKER_PHONE)
-        switch_camera_button.setOnClickListener {
-            rtcClient.switchCamera()
-        }
 
-        audio_output_button.setOnClickListener {
-            if (inSpeakerMode) {
-                inSpeakerMode = false
-                audio_output_button.setImageResource(R.drawable.ic_baseline_hearing_24)
-                audioManager.setDefaultAudioDevice(RTCAudioManager.AudioDevice.EARPIECE)
-            } else {
-                inSpeakerMode = true
-                audio_output_button.setImageResource(R.drawable.ic_baseline_speaker_up_24)
-                audioManager.setDefaultAudioDevice(RTCAudioManager.AudioDevice.SPEAKER_PHONE)
-            }
-        }
-        video_button.setOnClickListener {
-            if (isVideoPaused) {
-                isVideoPaused = false
-                video_button.setImageResource(R.drawable.ic_baseline_videocam_off_24)
-            } else {
-                isVideoPaused = true
-                video_button.setImageResource(R.drawable.ic_baseline_videocam_24)
-            }
-            rtcClient.enableVideo(isVideoPaused)
-        }
-        mic_button.setOnClickListener {
-            if (isMute) {
-                isMute = false
-                mic_button.setImageResource(R.drawable.ic_baseline_mic_off_24)
-            } else {
-                isMute = true
-                mic_button.setImageResource(R.drawable.ic_baseline_mic_24)
-            }
-            rtcClient.enableAudio(isMute)
-        }
-        end_call_button.setOnClickListener {
+        switchCameraListener()
+        audioOutputListener()
+        videoListener()
+        micListener()
+        endCallButtonListener()
+    }
+
+    private fun endCallButtonListener() {
+        endCallButton.setOnClickListener {
             rtcClient.endCall(meetingID)
-            remote_view.isGone = false
+            remoteView.isGone = false
             Constants.isCallEnded = true
             finish()
             startActivity(Intent(this@RTCActivity, MainActivity::class.java))
         }
     }
 
+    private fun micListener() {
+        micButton.setOnClickListener {
+            if (isMute) {
+                isMute = false
+                micButton.setImageResource(R.drawable.ic_baseline_mic_off_24)
+            } else {
+                isMute = true
+                micButton.setImageResource(R.drawable.ic_baseline_mic_24)
+            }
+            rtcClient.enableAudio(isMute)
+        }
+    }
+
+    private fun videoListener() {
+        videoButton.setOnClickListener {
+            if (isVideoPaused) {
+                isVideoPaused = false
+                videoButton.setImageResource(R.drawable.ic_baseline_videocam_off_24)
+            } else {
+                isVideoPaused = true
+                videoButton.setImageResource(R.drawable.ic_baseline_videocam_24)
+            }
+            rtcClient.enableVideo(isVideoPaused)
+        }
+    }
+
+    private fun audioOutputListener() {
+        audioOutputButton.setOnClickListener {
+            if (inSpeakerMode) {
+                earPieceMode()
+            } else {
+                speakerMode()
+            }
+        }
+    }
+
+    private fun switchCameraListener() {
+        switchCameraButton.setOnClickListener {
+            rtcClient.switchCamera()
+        }
+    }
+
+    private fun earPieceMode() {
+        inSpeakerMode = false
+        audioOutputButton.setImageResource(R.drawable.ic_baseline_hearing_24)
+        audioManager.setDefaultAudioDevice(RTCAudioManager.AudioDevice.EARPIECE)
+    }
+
+    private fun speakerMode() {
+        inSpeakerMode = true
+        audioOutputButton.setImageResource(R.drawable.ic_baseline_speaker_up_24)
+        audioManager.setDefaultAudioDevice(RTCAudioManager.AudioDevice.SPEAKER_PHONE)
+    }
+
+    private fun getArgument() {
+        if (intent.hasExtra(ARGUMENT_MEETING_ID))
+            meetingID = intent.getStringExtra(ARGUMENT_MEETING_ID)!!
+        if (intent.hasExtra(ARGUMENT_IS_JOIN))
+            isJoin = intent.getBooleanExtra(ARGUMENT_IS_JOIN, false)
+    }
+
     private fun checkCameraAndAudioPermission() {
-        if ((ContextCompat.checkSelfPermission(this, CAMERA_PERMISSION)
-                    != PackageManager.PERMISSION_GRANTED) &&
-            (ContextCompat.checkSelfPermission(this,AUDIO_PERMISSION)
-                    != PackageManager.PERMISSION_GRANTED)) {
+        if ((ContextCompat.checkSelfPermission(
+                this,
+                CAMERA_PERMISSION
+            ) != PackageManager.PERMISSION_GRANTED) &&
+            (ContextCompat.checkSelfPermission(
+                this,
+                AUDIO_PERMISSION
+            ) != PackageManager.PERMISSION_GRANTED)
+        ) {
             requestCameraAndAudioPermission()
         } else {
             onCameraAndAudioPermissionGranted()
@@ -117,75 +178,45 @@ class RTCActivity : AppCompatActivity() {
     }
 
     private fun onCameraAndAudioPermissionGranted() {
-        rtcClient = RTCClient(
-                application,
-                object : PeerConnectionObserver() {
-                    override fun onIceCandidate(p0: IceCandidate?) {
-                        super.onIceCandidate(p0)
-                        signallingClient.sendIceCandidate(p0, isJoin)
-                        rtcClient.addIceCandidate(p0)
-                    }
-
-                    override fun onAddStream(p0: MediaStream?) {
-                        super.onAddStream(p0)
-                        Log.e(TAG, "onAddStream: $p0")
-                        p0?.videoTracks?.get(0)?.addSink(remote_view)
-                    }
-
-                    override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {
-                        Log.e(TAG, "onIceConnectionChange: $p0")
-                    }
-
-                    override fun onIceConnectionReceivingChange(p0: Boolean) {
-                        Log.e(TAG, "onIceConnectionReceivingChange: $p0")
-                    }
-
-                    override fun onConnectionChange(newState: PeerConnection.PeerConnectionState?) {
-                        Log.e(TAG, "onConnectionChange: $newState")
-                    }
-
-                    override fun onDataChannel(p0: DataChannel?) {
-                        Log.e(TAG, "onDataChannel: $p0")
-                    }
-
-                    override fun onStandardizedIceConnectionChange(newState: PeerConnection.IceConnectionState?) {
-                        Log.e(TAG, "onStandardizedIceConnectionChange: $newState")
-                    }
-
-                    override fun onAddTrack(p0: RtpReceiver?, p1: Array<out MediaStream>?) {
-                        Log.e(TAG, "onAddTrack: $p0 \n $p1")
-                    }
-
-                    override fun onTrack(transceiver: RtpTransceiver?) {
-                        Log.e(TAG, "onTrack: $transceiver" )
-                    }
+        rtcClient = RTCClient(application,
+            object : PeerConnectionObserver() {
+                override fun onIceCandidate(iceCandidate: IceCandidate?) {
+                    super.onIceCandidate(iceCandidate)
+                    signallingClient.sendIceCandidate(iceCandidate, isJoin)
+                    rtcClient.addIceCandidate(iceCandidate)
                 }
-        )
 
-        rtcClient.initSurfaceView(remote_view)
-        rtcClient.initSurfaceView(local_view)
-        rtcClient.startLocalVideoCapture(local_view)
-        signallingClient =  SignalingClient(meetingID,createSignallingClientListener())
-        if (!isJoin)
+                override fun onAddStream(mediaStream: MediaStream?) {
+                    super.onAddStream(mediaStream)
+                    Log.e(TAG, "onAddStream: $mediaStream")
+                    mediaStream?.videoTracks?.get(0)?.addSink(remoteView)
+                }
+            })
+
+        rtcClient.initSurfaceView(remoteView)
+        rtcClient.initSurfaceView(localView)
+        rtcClient.startLocalVideoCapture(localView)
+        signallingClient = SignalingClient(meetingID,createSignallingClientListener())
+        if(!isJoin)
             rtcClient.call(sdpObserver,meetingID)
     }
 
-    private fun createSignallingClientListener() = object : SignalingClientListener {
+    private fun createSignallingClientListener() = object : SignalingClientListener{
         override fun onConnectionEstablished() {
-            end_call_button.isClickable = true
+            endCallButton.isClickable = true
         }
 
         override fun onOfferReceived(description: SessionDescription) {
             rtcClient.onRemoteSessionReceived(description)
             Constants.isIntiatedNow = false
-            rtcClient.answer(sdpObserver,meetingID)
-            remote_view_loading.isGone = true
+            rtcClient.answer(sdpObserver, meetingID)
+            remoteViewLoading.isGone = true
         }
 
         override fun onAnswerReceived(description: SessionDescription) {
             rtcClient.onRemoteSessionReceived(description)
             Constants.isIntiatedNow = false
-            remote_view_loading.isGone = true
+            remoteViewLoading.isGone = true
         }
 
         override fun onIceCandidateReceived(iceCandidate: IceCandidate) {
@@ -193,41 +224,48 @@ class RTCActivity : AppCompatActivity() {
         }
 
         override fun onCallEnded() {
-            if (!Constants.isCallEnded) {
+            if(!Constants.isCallEnded){
                 Constants.isCallEnded = true
                 rtcClient.endCall(meetingID)
                 finish()
-                startActivity(Intent(this@RTCActivity, MainActivity::class.java))
+                startActivity(Intent(this@RTCActivity,MainActivity::class.java))
             }
         }
+
     }
 
     private fun requestCameraAndAudioPermission(dialogShown: Boolean = false) {
         if (ActivityCompat.shouldShowRequestPermissionRationale(this, CAMERA_PERMISSION) &&
             ActivityCompat.shouldShowRequestPermissionRationale(this, AUDIO_PERMISSION) &&
-            !dialogShown) {
+            !dialogShown
+        ) {
             showPermissionRationaleDialog()
         } else {
-            ActivityCompat.requestPermissions(this, arrayOf(CAMERA_PERMISSION, AUDIO_PERMISSION), CAMERA_AUDIO_PERMISSION_REQUEST_CODE)
+            ActivityCompat.requestPermissions(
+                this, arrayOf(CAMERA_PERMISSION, AUDIO_PERMISSION),
+                CAMERA_AUDIO_PERMISSION_REQUEST_CODE
+            )
         }
     }
 
     private fun showPermissionRationaleDialog() {
         AlertDialog.Builder(this)
-                .setTitle("Camera And Audio Permission Required")
-                .setMessage("This app need the camera and audio to function")
-                .setPositiveButton("Grant") { dialog, _ ->
-                    dialog.dismiss()
-                    requestCameraAndAudioPermission(true)
-                }
-                .setNegativeButton("Deny") { dialog, _ ->
-                    dialog.dismiss()
-                    onCameraPermissionDenied()
-                }
-                .show()
+            .setTitle(getString(R.string.permissionRationaleTitle))
+            .setMessage(getString(R.string.permissionRationaleMessage))
+            .setPositiveButton(getString(R.string.permissionRationalePositive)) { dialog, _ ->
+                dialog.dismiss()
+                requestCameraAndAudioPermission(true)
+            }.setNegativeButton(getString(R.string.permissionRationaleDeny)) { dialog, _ ->
+                dialog.dismiss()
+                onCameraPermissionDenied()
+            }.show()
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == CAMERA_AUDIO_PERMISSION_REQUEST_CODE && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             onCameraAndAudioPermissionGranted()

@@ -14,7 +14,6 @@ import android.util.Log
 import androidx.annotation.Nullable
 import org.webrtc.ThreadUtils
 import java.util.*
-import kotlin.collections.HashSet
 
 
 class RTCAudioManager(context: Context) {
@@ -41,13 +40,14 @@ class RTCAudioManager(context: Context) {
 
     private val apprtcContext: Context
 
-    @Nullable
-    private val audioManager: AudioManager
+    private val audioManager: AudioManager?
 
     @Nullable
     private var audioManagerEvents: AudioManagerEvents? = null
     private var amState: AudioManagerState
-    private var savedAudioMode = AudioManager.MODE_INVALID
+
+    //todo was MODE_INVALID
+    private var savedAudioMode = AudioManager.MODE_NORMAL
     private var savedIsSpeakerPhoneOn = false
     private var savedIsMicrophoneMute = false
     private var hasWiredHeadset = false
@@ -90,11 +90,13 @@ class RTCAudioManager(context: Context) {
             val state = intent.getIntExtra("state", STATE_UNPLUGGED)
             val microphone = intent.getIntExtra("microphone", HAS_NO_MIC)
             val name = intent.getStringExtra("name")
-            Log.d(TAG, "WiredHeadsetReceiver.onReceive"
-                    + ": " + "a=" + intent.action.toString() + ", s=" +
-                    (if (state == STATE_UNPLUGGED) "unplugged" else "plugged").toString()
-                    + ", m=" + (if (microphone == HAS_MIC) "mic" else "no mic").toString()
-                    + ", n=" + name.toString() + ", sb=" + isInitialStickyBroadcast)
+            Log.d(
+                TAG, "WiredHeadsetReceiver.onReceive"
+                        + ": " + "a=" + intent.action.toString() + ", s=" +
+                        (if (state == STATE_UNPLUGGED) "unplugged" else "plugged").toString()
+                        + ", m=" + (if (microphone == HAS_MIC) "mic" else "no mic").toString()
+                        + ", n=" + name.toString() + ", sb=" + isInitialStickyBroadcast
+            )
             hasWiredHeadset = (state == STATE_PLUGGED)
             updateAudioDeviceState()
         }
@@ -121,9 +123,11 @@ class RTCAudioManager(context: Context) {
         amState = AudioManagerState.RUNNING
 
         // Store current audio state so we can restore it when stop() is called.
-        savedAudioMode = audioManager.mode
-        savedIsSpeakerPhoneOn = audioManager.isSpeakerphoneOn
-        savedIsMicrophoneMute = audioManager.isMicrophoneMute
+        audioManager?.run {
+            savedAudioMode = mode
+            savedIsSpeakerPhoneOn = isSpeakerphoneOn
+            savedIsMicrophoneMute = isMicrophoneMute
+        }
         hasWiredHeadset = hasWiredHeadset()
 
         // Create an AudioManager.OnAudioFocusChangeListener instance.
@@ -155,7 +159,7 @@ class RTCAudioManager(context: Context) {
             }
 
         // Request audio playout focus (without ducking) and install listener for changes in focus.
-        val result = audioManager.requestAudioFocus(
+        val result = audioManager?.requestAudioFocus(
             audioFocusChangeListener,
             AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
         )
@@ -168,7 +172,7 @@ class RTCAudioManager(context: Context) {
         // Start by setting MODE_IN_COMMUNICATION as default audio mode. It is
         // required to be in this mode when playout and/or recording starts for
         // best possible VoIP performance.
-        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
 
         // Always disable microphone mute during a WebRTC call.
         setMicrophoneMute(false)
@@ -205,10 +209,10 @@ class RTCAudioManager(context: Context) {
         // Restore previously stored audio states.
         setSpeakerphoneOn(savedIsSpeakerPhoneOn)
         setMicrophoneMute(savedIsMicrophoneMute)
-        audioManager.mode = savedAudioMode
+        audioManager?.mode = savedAudioMode
 
         // Abandon audio focus. Gives the previous focus owner, if any, focus.
-        audioManager.abandonAudioFocus(audioFocusChangeListener)
+        audioManager?.abandonAudioFocus(audioFocusChangeListener)
         audioFocusChangeListener = null
         Log.d(TAG, "Abandoned audio focus for VOICE_CALL streams")
 
@@ -285,20 +289,20 @@ class RTCAudioManager(context: Context) {
 
     /** Sets the speaker phone mode.  */
     private fun setSpeakerphoneOn(on: Boolean) {
-        val wasOn = audioManager.isSpeakerphoneOn
+        val wasOn = audioManager?.isSpeakerphoneOn
         if (wasOn == on) {
             return
         }
-        audioManager.isSpeakerphoneOn = on
+        audioManager?.isSpeakerphoneOn = on
     }
 
     /** Sets the microphone mute state.  */
     private fun setMicrophoneMute(on: Boolean) {
-        val wasMuted = audioManager.isMicrophoneMute
+        val wasMuted = audioManager?.isMicrophoneMute
         if (wasMuted == on) {
             return
         }
-        audioManager.isMicrophoneMute = on
+        audioManager?.isMicrophoneMute = on
     }
 
     /** Gets the current earpiece state.  */
@@ -316,20 +320,23 @@ class RTCAudioManager(context: Context) {
     @Deprecated("")
     private fun hasWiredHeadset(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return audioManager.isWiredHeadsetOn
+            return audioManager?.isWiredHeadsetOn ?: false
         } else {
-            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
-            for (device: AudioDeviceInfo in devices) {
-                val type = device.type
-                if (type == AudioDeviceInfo.TYPE_WIRED_HEADSET) {
-                    Log.d(TAG, "hasWiredHeadset: found wired headset")
-                    return true
-                } else if (type == AudioDeviceInfo.TYPE_USB_DEVICE) {
-                    Log.d(TAG, "hasWiredHeadset: found USB audio device")
-                    return true
+            audioManager?.run {
+                val devices = getDevices(AudioManager.GET_DEVICES_INPUTS)
+                for (device: AudioDeviceInfo in devices) {
+                    val type = device.type
+                    if (type == AudioDeviceInfo.TYPE_WIRED_HEADSET) {
+                        Log.d(TAG, "hasWiredHeadset: found wired headset")
+                        return true
+                    } else if (type == AudioDeviceInfo.TYPE_USB_DEVICE) {
+                        Log.d(TAG, "hasWiredHeadset: found USB audio device")
+                        return true
+                    }
                 }
-            }
-            return false
+                return false
+            } ?: return false
+
         }
     }
 

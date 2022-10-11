@@ -1,178 +1,167 @@
 package com.developerspace.webrtcsample
 
 import android.util.Log
+import com.developerspace.webrtcsample.Constants.KEY_TYPE
+import com.developerspace.webrtcsample.Constants.SDP
+import com.developerspace.webrtcsample.Constants.SDP_CANDIDATE
+import com.developerspace.webrtcsample.Constants.SDP_LINE_INDEX
+import com.developerspace.webrtcsample.Constants.SDP_MID
+import com.developerspace.webrtcsample.Constants.SERVER_URL
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
-import com.google.gson.Gson
-import io.ktor.util.*
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.ConflatedBroadcastChannel
-import org.json.JSONObject
 import org.webrtc.IceCandidate
 import org.webrtc.SessionDescription
+import kotlin.coroutines.CoroutineContext
 
-@ExperimentalCoroutinesApi
-@KtorExperimentalAPI
 class SignalingClient(
-    private val meetingID : String,
-    private val listener: SignalingClientListener
+    private val meetingID: String,
+    private val listener: SignalingClientListener,
 ) : CoroutineScope {
-
-    companion object {
-        private const val HOST_ADDRESS = "192.168.0.12"
-    }
-
-    var jsonObject : JSONObject?= null
 
     private val job = Job()
 
-    val TAG = "SignallingClient"
-
-    val db = Firebase.firestore
-
-    private val gson = Gson()
-
-    var SDPtype : String? = null
-    override val coroutineContext = Dispatchers.IO + job
-
-//    private val client = HttpClient(CIO) {
-//        install(WebSockets)
-//        install(JsonFeature) {
-//            serializer = GsonSerializer()
-//        }
-//    }
-
-    private val sendChannel = ConflatedBroadcastChannel<String>()
+    companion object {
+        val TAG = this::class.simpleName
+    }
 
     init {
         connect()
     }
 
+    override val coroutineContext: CoroutineContext
+        get() = Dispatchers.IO + job
+
+    val network = Firebase.firestore
+    var sdpType: String? = null
+
+
+    fun sendIceCandidate(candidate: IceCandidate?, isJoin: Boolean) = runBlocking {
+        val type = when {
+            isJoin -> TypeEnum.TYPE_ANSWER_CANDIDATE.value
+            else -> TypeEnum.TYPE_OFFER_CANDIDATE.value
+        }
+        val candidateConstant = hashMapOf(
+            SERVER_URL to candidate?.serverUrl,
+            SDP_MID to candidate?.sdpMid,
+            SDP_LINE_INDEX to candidate?.sdpMLineIndex,
+            SDP_CANDIDATE to candidate?.sdp,
+            KEY_TYPE to type
+        )
+
+        network.collection(CollectionEnum.CALLS.value).document(meetingID)
+            .collection(CollectionEnum.CANDIDATES.value).document(type).set(candidateConstant)
+            .addOnSuccessListener {
+                Log.e(TAG, "sendIceCandidate: Success")
+            }.addOnFailureListener {
+                Log.e(TAG, "sendIceCandidate: Error $it")
+            }
+    }
+
     private fun connect() = launch {
-        db.enableNetwork().addOnSuccessListener {
+        network.enableNetwork().addOnCanceledListener {
             listener.onConnectionEstablished()
         }
-        val sendData = sendChannel.trySend("")
-        sendData.let {
-            Log.v(this@SignalingClient.javaClass.simpleName, "Sending: $it")
-//            val data = hashMapOf(
-//                    "data" to it
-//            )
-//            db.collection("calls")
-//                    .add(data)
-//                    .addOnSuccessListener { documentReference ->
-//                        Log.e(TAG, "DocumentSnapshot added with ID: ${documentReference.id}")
-//                    }
-//                    .addOnFailureListener { e ->
-//                        Log.e(TAG, "Error adding document", e)
-//                    }
-        }
+        //todo sendData
+
         try {
-            db.collection("calls")
-                .document(meetingID)
-                .addSnapshotListener { snapshot, e ->
-
-                    if (e != null) {
-                        Log.w(TAG, "listen:error", e)
-                        return@addSnapshotListener
-                    }
-
-                    if (snapshot != null && snapshot.exists()) {
-                        val data = snapshot.data
-                        if (data?.containsKey("type")!! &&
-                            data.getValue("type").toString() == "OFFER") {
-                                listener.onOfferReceived(SessionDescription(
-                                    SessionDescription.Type.OFFER,data["sdp"].toString()))
-                            SDPtype = "Offer"
-                        } else if (data?.containsKey("type")!! &&
-                            data.getValue("type").toString() == "ANSWER") {
-                                listener.onAnswerReceived(SessionDescription(
-                                    SessionDescription.Type.ANSWER,data["sdp"].toString()))
-                            SDPtype = "Answer"
-                        } else if (!Constants.isIntiatedNow && data.containsKey("type") &&
-                            data.getValue("type").toString() == "END_CALL") {
-                            listener.onCallEnded()
-                            SDPtype = "End Call"
-
-                        }
-                        Log.d(TAG, "Current data: ${snapshot.data}")
-                    } else {
-                        Log.d(TAG, "Current data: null")
-                    }
-                }
-            db.collection("calls").document(meetingID)
-                    .collection("candidates").addSnapshotListener{ querysnapshot,e->
-                        if (e != null) {
-                            Log.w(TAG, "listen:error", e)
-                            return@addSnapshotListener
-                        }
-
-                        if (querysnapshot != null && !querysnapshot.isEmpty) {
-                            for (dataSnapShot in querysnapshot) {
-
-                                val data = dataSnapShot.data
-                                if (SDPtype == "Offer" && data.containsKey("type") && data.get("type")=="offerCandidate") {
-                                    listener.onIceCandidateReceived(
-                                            IceCandidate(data["sdpMid"].toString(),
-                                                    Math.toIntExact(data["sdpMLineIndex"] as Long),
-                                                    data["sdpCandidate"].toString()))
-                                } else if (SDPtype == "Answer" && data.containsKey("type") && data.get("type")=="answerCandidate") {
-                                    listener.onIceCandidateReceived(
-                                            IceCandidate(data["sdpMid"].toString(),
-                                                    Math.toIntExact(data["sdpMLineIndex"] as Long),
-                                                    data["sdpCandidate"].toString()))
-                                }
-                                Log.e(TAG, "candidateQuery: $dataSnapShot" )
-                            }
-                        }
-                    }
-//            db.collection("calls").document(meetingID)
-//                    .get()
-//                    .addOnSuccessListener { result ->
-//                        val data = result.data
-//                        if (data?.containsKey("type")!! && data.getValue("type").toString() == "OFFER") {
-//                            Log.e(TAG, "connect: OFFER - $data")
-//                            listener.onOfferReceived(SessionDescription(SessionDescription.Type.OFFER,data["sdp"].toString()))
-//                        } else if (data?.containsKey("type") && data.getValue("type").toString() == "ANSWER") {
-//                            Log.e(TAG, "connect: ANSWER - $data")
-//                            listener.onAnswerReceived(SessionDescription(SessionDescription.Type.ANSWER,data["sdp"].toString()))
-//                        }
-//                    }
-//                    .addOnFailureListener {
-//                        Log.e(TAG, "connect: $it")
-//                    }
-
-        } catch (exception: Exception) {
-            Log.e(TAG, "connectException: $exception")
-
+            offerAnswerEndObserver()
+            candidateAddedToTheCallObserver()
+        } catch (cause: Throwable) {
         }
     }
 
-    fun sendIceCandidate(candidate: IceCandidate?,isJoin : Boolean) = runBlocking {
-        val type = when {
-            isJoin -> "answerCandidate"
-            else -> "offerCandidate"
+    private fun offerAnswerEndObserver() {
+        network.collection(CollectionEnum.CALLS.value).document(meetingID)
+            .addSnapshotListener { snapshot, error ->
+                if (checkError(error)) return@addSnapshotListener
+                val data = snapshot?.data
+                if (snapshot != null && snapshot.exists() && data?.containsKey(KEY_TYPE) != null && data.containsKey(
+                        KEY_TYPE
+                    )
+                ) {
+                    offerAnswerEnd(data)
+                }
+            }
+    }
+
+    private fun checkError(error: FirebaseFirestoreException?): Boolean {
+        if (error != null) {
+            Log.w(TAG, "listen:error", error)
+            return true
         }
-        val candidateConstant = hashMapOf(
-                "serverUrl" to candidate?.serverUrl,
-                "sdpMid" to candidate?.sdpMid,
-                "sdpMLineIndex" to candidate?.sdpMLineIndex,
-                "sdpCandidate" to candidate?.sdp,
-                "type" to type
-        )
-        db.collection("calls")
-            .document("$meetingID").collection("candidates").document(type)
-            .set(candidateConstant as Map<String, Any>)
-            .addOnSuccessListener {
-                Log.e(TAG, "sendIceCandidate: Success" )
+        return false
+    }
+
+    private fun offerAnswerEnd(data: MutableMap<String, Any>) {
+        val type = data.getValue(KEY_TYPE).toString()
+        val description = data[SDP].toString()
+        when (type) {
+            TypeEnum.OFFER.value -> {
+                listener.onOfferReceived(
+                    SessionDescription(
+                        SessionDescription.Type.OFFER, description
+                    )
+                )
+                sdpType = SDPTypeEnum.OFFER.value
             }
-            .addOnFailureListener {
-                Log.e(TAG, "sendIceCandidate: Error $it" )
+            TypeEnum.ANSWER.value -> {
+                listener.onAnswerReceived(
+                    SessionDescription(
+                        SessionDescription.Type.ANSWER, description
+                    )
+                )
+                sdpType = SDPTypeEnum.ANSWER.value
             }
+            TypeEnum.END_CALL.value -> {
+                if (!Constants.isIntiatedNow) {
+                    listener.onCallEnded()
+                    sdpType = SDPTypeEnum.END_CALL.value
+                }
+            }
+        }
+        Log.d(TAG, "snapshot data:$data")
+    }
+
+
+    private fun candidateAddedToTheCallObserver() {
+        network.collection(CollectionEnum.CALLS.value).document(meetingID)
+            .collection(CollectionEnum.CANDIDATES.value)
+            .addSnapshotListener { querysnapshot, error ->
+                if (checkError(error)) return@addSnapshotListener
+                if (querysnapshot != null && !querysnapshot.isEmpty) {
+                    for (dataSnapshot in querysnapshot) {
+                        val data = dataSnapshot.data
+                        val type = data.getValue(KEY_TYPE).toString()
+                        if (dataSnapshot != null && dataSnapshot.exists() && data.containsKey(
+                                KEY_TYPE
+                            )
+                        ) candidateAddedToTheCall(type, data)
+
+                        Log.e(TAG, "candidateQuery: $dataSnapshot")
+                    }
+                }
+            }
+    }
+
+    private fun candidateAddedToTheCall(
+        type: String, data: Map<String, Any>
+    ) {
+        when {
+            sdpType == SDPTypeEnum.OFFER.value && type == TypeEnum.TYPE_OFFER_CANDIDATE.value -> {
+                listener.onIceCandidateReceived(
+                    Constants.fillIceCandidate(data)
+                )
+            }
+            sdpType == SDPTypeEnum.ANSWER.value && type == TypeEnum.TYPE_ANSWER_CANDIDATE.value -> {
+                listener.onIceCandidateReceived(Constants.fillIceCandidate(data))
+            }
+        }
     }
 
     fun destroy() {
-//        client.close()
         job.complete()
     }
+
 }
